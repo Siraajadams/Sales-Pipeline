@@ -2,7 +2,7 @@ import "./globals.css";
 
 export const metadata = {
   title: "Sales Pipeline CRM",
-  description: "Videomed Commercial Dashboard",
+  description: "Commercial CRM Dashboard",
 };
 
 export default function RootLayout({
