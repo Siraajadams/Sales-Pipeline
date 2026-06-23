@@ -38,14 +38,7 @@ type Activity = {
   notes: string;
 };
 
-const stages = [
-  "Lead",
-  "Contact Made",
-  "Proposal Made",
-  "Negotiation",
-  "Won",
-  "Lost",
-];
+const stages = ["Lead", "Contact Made", "Proposal Made", "Negotiation", "Won", "Lost"];
 
 const types = [
   { value: "prospect", label: "Prospect" },
@@ -146,7 +139,6 @@ export default function SalesDashboardPage() {
     }
 
     setMessage("Record saved successfully.");
-
     setForm({
       type: "prospect",
       name: "",
@@ -192,7 +184,6 @@ export default function SalesDashboardPage() {
     }
 
     setMessage("Activity saved successfully.");
-
     setActivityForm({
       sales_id: "",
       activity_type: "Call",
@@ -245,16 +236,24 @@ export default function SalesDashboardPage() {
       <aside className="hidden md:flex w-64 bg-slate-950 text-white flex-col p-5">
         <h1 className="text-2xl font-bold mb-8">Sales Pipeline</h1>
 
-        {["Dashboard", "Deals", "Clients", "Activities", "Sites", "Reports"].map(
-          (item) => (
-            <div
-              key={item}
-              className="px-4 py-3 rounded-xl mb-2 hover:bg-slate-800 cursor-pointer"
+        <div className="space-y-2">
+          {[
+            { label: "Dashboard", href: "#dashboard" },
+            { label: "Deals", href: "#deals" },
+            { label: "Clients", href: "#clients" },
+            { label: "Activities", href: "#activities" },
+            { label: "Sites", href: "#sites" },
+            { label: "Reports", href: "#reports" },
+          ].map((item) => (
+            <a
+              key={item.label}
+              href={item.href}
+              className="block px-4 py-3 rounded-xl hover:bg-slate-800 transition"
             >
-              {item}
-            </div>
-          )
-        )}
+              {item.label}
+            </a>
+          ))}
+        </div>
 
         <div className="mt-auto text-xs text-slate-400">
           Videomed · PillSquad · Carepon
@@ -262,14 +261,13 @@ export default function SalesDashboardPage() {
       </aside>
 
       <section className="flex-1 p-6">
-        <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4 mb-6">
+        <div id="dashboard" className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4 mb-6">
           <div>
             <h2 className="text-3xl font-bold text-slate-900">
               Commercial Dashboard
             </h2>
             <p className="text-slate-600">
-              Pipeline, proposals, client value, doctor sites and PillSquad
-              progress.
+              Pipeline, proposals, client value, doctor sites and PillSquad progress.
             </p>
           </div>
 
@@ -302,7 +300,7 @@ export default function SalesDashboardPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div id="reports" className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
           <Kpi title="Pipeline Value" value={`R ${proposalValue.toLocaleString()}`} />
           <Kpi title="Weighted Forecast" value={`R ${Math.round(weightedForecast).toLocaleString()}`} />
           <Kpi title="Monthly Turnover" value={`R ${monthlyTurnover.toLocaleString()}`} />
@@ -316,7 +314,7 @@ export default function SalesDashboardPage() {
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-6">
-          <section className="xl:col-span-2 bg-white rounded-2xl shadow p-5">
+          <section id="deals" className="xl:col-span-2 bg-white rounded-2xl shadow p-5 scroll-mt-6">
             <h3 className="text-xl font-bold mb-4">Pipeline Board</h3>
 
             <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-3">
@@ -366,7 +364,7 @@ export default function SalesDashboardPage() {
             </div>
           </section>
 
-          <section className="bg-white rounded-2xl shadow p-5">
+          <section id="clients" className="bg-white rounded-2xl shadow p-5 scroll-mt-6">
             <h3 className="text-xl font-bold mb-4">Add Sales Record</h3>
 
             <div className="space-y-3">
@@ -415,7 +413,7 @@ export default function SalesDashboardPage() {
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-6">
-          <section className="bg-white rounded-2xl shadow p-5">
+          <section id="activities" className="bg-white rounded-2xl shadow p-5 scroll-mt-6">
             <h3 className="text-xl font-bold mb-4">Add Activity</h3>
 
             <div className="space-y-3">
@@ -484,8 +482,8 @@ export default function SalesDashboardPage() {
           </section>
         </div>
 
-        <section className="bg-white rounded-2xl shadow p-5">
-          <h3 className="text-xl font-bold mb-4">All Records</h3>
+        <section id="sites" className="bg-white rounded-2xl shadow p-5 scroll-mt-6">
+          <h3 className="text-xl font-bold mb-4">All Records / Sites</h3>
 
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -541,7 +539,7 @@ export default function SalesDashboardPage() {
   );
 }
 
-function Kpi({ title, value }: { title: string; value: string | number }) {
+function Kpi({ title, value }: { title: string | number; value: string | number }) {
   return (
     <div className="bg-white rounded-2xl p-5 shadow border-l-4 border-orange-500">
       <p className="text-slate-500 text-sm">{title}</p>
