@@ -262,23 +262,56 @@ export default function SalesDashboardPage() {
     });
   }, [items, search, filterType]);
 
-  const proposalValue = items.reduce((sum, i) => sum + Number(i.value || 0), 0);
+  // ==========================================
+  // DASHBOARD CALCULATIONS
+  // ==========================================
+  // Only open opportunities contribute to financial pipeline KPIs.
+  // When a deal is marked Won or Lost, it is removed from Pipeline Value,
+  // Weighted Forecast and Monthly Turnover.
+  const activeItems = items.filter((i) => {
+    const stage = (i.stage || "").toLowerCase();
+    const status = (i.status || "").toLowerCase();
 
-  const monthlyTurnover = items.reduce(
+    return (
+      stage !== "won" &&
+      stage !== "lost" &&
+      status !== "won" &&
+      status !== "lost"
+    );
+  });
+
+  const wonItems = items.filter((i) => {
+    const stage = (i.stage || "").toLowerCase();
+    const status = (i.status || "").toLowerCase();
+    return stage === "won" || status === "won";
+  });
+
+  const lostItems = items.filter((i) => {
+    const stage = (i.stage || "").toLowerCase();
+    const status = (i.status || "").toLowerCase();
+    return stage === "lost" || status === "lost";
+  });
+
+  const proposalValue = activeItems.reduce(
+    (sum, i) => sum + Number(i.value || 0),
+    0
+  );
+
+  const monthlyTurnover = activeItems.reduce(
     (sum, i) => sum + Number(i.monthly_turnover || 0),
     0
   );
 
-  const prospects = items.filter((i) => i.type === "prospect");
-  const newClients = items.filter((i) => i.type === "new_client");
-  const existingClients = items.filter((i) => i.type === "existing_client");
-  const doctorSites = items.filter((i) => i.type === "doctor_site");
-  const vacantSites = items.filter((i) => i.type === "vacant_site");
-  const pillsquad = items.filter((i) => i.type === "pillsquad");
-
-  const weightedForecast = items.reduce((sum, i) => {
+  const weightedForecast = activeItems.reduce((sum, i) => {
     return sum + Number(i.value || 0) * (Number(i.probability || 0) / 100);
   }, 0);
+
+  const prospects = activeItems.filter((i) => i.type === "prospect");
+  const newClients = activeItems.filter((i) => i.type === "new_client");
+  const existingClients = activeItems.filter((i) => i.type === "existing_client");
+  const doctorSites = activeItems.filter((i) => i.type === "doctor_site");
+  const vacantSites = activeItems.filter((i) => i.type === "vacant_site");
+  const pillsquad = activeItems.filter((i) => i.type === "pillsquad");
 
   return (
     <main className="min-h-screen bg-slate-100 flex">
@@ -362,6 +395,9 @@ export default function SalesDashboardPage() {
           <Kpi title="Doctor Sites" value={doctorSites.length} />
           <Kpi title="Vacant Sites" value={vacantSites.length} />
           <Kpi title="PillSquad Records" value={pillsquad.length} />
+          <Kpi title="Open Deals" value={activeItems.length} />
+          <Kpi title="Won Deals" value={wonItems.length} />
+          <Kpi title="Lost Deals" value={lostItems.length} />
           <Kpi title="Activities" value={activities.length} />
         </div>
 
