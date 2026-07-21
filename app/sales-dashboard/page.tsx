@@ -1,9 +1,4 @@
-from pathlib import Path
-
-src = Path("/mnt/data/Pasted text(99).txt").read_text()
-
-# We'll write a fully updated page.tsx based on the user's file.
-updated = r'''"use client";
+"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabaseClient";
@@ -1210,8 +1205,3 @@ function Kpi({
     </div>
   );
 }
-'''
-
-out = Path("/mnt/data/page.tsx")
-out.write_text(updated)
-print(out)
