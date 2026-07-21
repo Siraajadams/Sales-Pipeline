@@ -1,4 +1,9 @@
-"use client";
+from pathlib import Path
+
+src = Path("/mnt/data/Pasted text(99).txt").read_text()
+
+# We'll write a fully updated page.tsx based on the user's file.
+updated = r'''"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../lib/supabaseClient";
@@ -45,6 +50,13 @@ const stages = [
   "Negotiation",
   "Won",
   "Lost",
+] as const;
+
+const openStages = [
+  "Lead",
+  "Contact Made",
+  "Proposal Made",
+  "Negotiation",
 ];
 
 const types = [
@@ -56,12 +68,31 @@ const types = [
   { value: "pillsquad", label: "PillSquad" },
 ];
 
+function isOpenItem(item: SalesItem) {
+  return openStages.includes(item.stage || "Lead");
+}
+
+function getStatusForStage(stage: string) {
+  if (stage === "Won") return "Won";
+  if (stage === "Lost") return "Lost";
+  return "Active";
+}
+
+function formatCurrency(value: number) {
+  return `R ${Math.round(value || 0).toLocaleString("en-ZA")}`;
+}
+
 export default function SalesDashboardPage() {
   const [items, setItems] = useState<SalesItem[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [message, setMessage] = useState("");
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState("all");
+  const [loading, setLoading] = useState(true);
+  const [savingId, setSavingId] = useState<string | null>(null);
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState("");
 
   const [form, setForm] = useState({
     type: "prospect",
@@ -96,9 +127,14 @@ export default function SalesDashboardPage() {
   });
 
   useEffect(() => {
-    loadData();
-    loadActivities();
+    void loadAllData();
   }, []);
+
+  async function loadAllData() {
+    setLoading(true);
+    await Promise.all([loadData(), loadActivities()]);
+    setLoading(false);
+  }
 
   async function loadData() {
     const { data, error } = await supabase
@@ -111,7 +147,7 @@ export default function SalesDashboardPage() {
       return;
     }
 
-    setItems(data || []);
+    setItems((data || []) as SalesItem[]);
   }
 
   async function loadActivities() {
@@ -120,24 +156,34 @@ export default function SalesDashboardPage() {
       .select("*")
       .order("created_at", { ascending: false });
 
-    if (!error) {
-      setActivities(data || []);
+    if (error) {
+      setMessage(error.message);
+      return;
     }
+
+    setActivities((data || []) as Activity[]);
   }
 
   async function saveItem() {
     setMessage("");
 
-    if (!form.name) {
+    const cleanName = form.name.trim();
+
+    if (!cleanName) {
       setMessage("Please enter a client or prospect name.");
       return;
     }
 
+    const stage = form.stage || "Lead";
+
     const { error } = await supabase.from("sales_dashboard").insert({
       ...form,
+      name: cleanName,
+      stage,
+      status: getStatusForStage(stage),
       value: Number(form.value || 0),
       monthly_turnover: Number(form.monthly_turnover || 0),
-      probability: Number(form.probability || 0),
+      probability: Math.min(100, Math.max(0, Number(form.probability || 0))),
       expected_close_date: form.expected_close_date || null,
       last_contact_date: form.last_contact_date || null,
     });
@@ -171,19 +217,20 @@ export default function SalesDashboardPage() {
       priority: "Medium",
     });
 
-    loadData();
+    await loadData();
   }
 
   async function saveActivity() {
     setMessage("");
 
-    if (!activityForm.subject) {
+    if (!activityForm.subject.trim()) {
       setMessage("Please enter an activity subject.");
       return;
     }
 
     const { error } = await supabase.from("sales_activities").insert({
       ...activityForm,
+      subject: activityForm.subject.trim(),
       sales_id: activityForm.sales_id || null,
       due_date: activityForm.due_date || null,
     });
@@ -205,31 +252,106 @@ export default function SalesDashboardPage() {
       notes: "",
     });
 
-    loadActivities();
+    await loadActivities();
   }
 
   async function updateLeadStage(id: string, newStage: string) {
     setMessage("");
+    setSavingId(id);
+
+    const previousItems = items;
+
+    setItems((current) =>
+      current.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              stage: newStage,
+              status: getStatusForStage(newStage),
+            }
+          : item
+      )
+    );
 
     const { error } = await supabase
       .from("sales_dashboard")
       .update({
         stage: newStage,
-        status: newStage === "Won" ? "Won" : newStage === "Lost" ? "Lost" : "Active",
+        status: getStatusForStage(newStage),
       })
       .eq("id", id);
 
     if (error) {
+      setItems(previousItems);
       setMessage(error.message);
+      setSavingId(null);
       return;
     }
 
-    setMessage("Lead updated successfully.");
-    loadData();
+    setMessage(
+      newStage === "Lost"
+        ? "Prospect moved to Lost. Pipeline totals have decreased."
+        : newStage === "Won"
+        ? "Deal moved to Won. It has been removed from the open pipeline."
+        : "Deal moved back into the active pipeline. Totals have been updated."
+    );
+
+    setSavingId(null);
+    await loadData();
+  }
+
+  function startEditingName(item: SalesItem) {
+    setEditingId(item.id);
+    setEditingName(item.name || "");
+  }
+
+  function cancelEditingName() {
+    setEditingId(null);
+    setEditingName("");
+  }
+
+  async function updateProspectName(id: string) {
+    const cleanName = editingName.trim();
+
+    if (!cleanName) {
+      setMessage("The prospect or client name cannot be empty.");
+      return;
+    }
+
+    setSavingId(id);
+
+    const { error } = await supabase
+      .from("sales_dashboard")
+      .update({ name: cleanName })
+      .eq("id", id);
+
+    if (error) {
+      setMessage(error.message);
+      setSavingId(null);
+      return;
+    }
+
+    setItems((current) =>
+      current.map((item) =>
+        item.id === id ? { ...item, name: cleanName } : item
+      )
+    );
+
+    setEditingId(null);
+    setEditingName("");
+    setSavingId(null);
+    setMessage("Prospect name updated successfully.");
   }
 
   async function deleteRecord(id: string) {
+    const confirmed = window.confirm(
+      "Are you sure you want to delete this sales record?"
+    );
+
+    if (!confirmed) return;
+
     setMessage("");
+    setSavingId(id);
 
     const { error } = await supabase
       .from("sales_dashboard")
@@ -238,23 +360,26 @@ export default function SalesDashboardPage() {
 
     if (error) {
       setMessage(error.message);
+      setSavingId(null);
       return;
     }
 
+    setItems((current) => current.filter((item) => item.id !== id));
+    setSavingId(null);
     setMessage("Record deleted successfully.");
-    loadData();
   }
 
   const filteredItems = useMemo(() => {
-    return items.filter((item) => {
-      const s = search.toLowerCase();
+    const normalizedSearch = search.trim().toLowerCase();
 
+    return items.filter((item) => {
       const matchesSearch =
-        item.name?.toLowerCase().includes(s) ||
-        item.service?.toLowerCase().includes(s) ||
-        item.region?.toLowerCase().includes(s) ||
-        item.contact_person?.toLowerCase().includes(s) ||
-        item.assigned_to?.toLowerCase().includes(s);
+        !normalizedSearch ||
+        item.name?.toLowerCase().includes(normalizedSearch) ||
+        item.service?.toLowerCase().includes(normalizedSearch) ||
+        item.region?.toLowerCase().includes(normalizedSearch) ||
+        item.contact_person?.toLowerCase().includes(normalizedSearch) ||
+        item.assigned_to?.toLowerCase().includes(normalizedSearch);
 
       const matchesType = filterType === "all" || item.type === filterType;
 
@@ -262,56 +387,46 @@ export default function SalesDashboardPage() {
     });
   }, [items, search, filterType]);
 
-  // ==========================================
-  // DASHBOARD CALCULATIONS
-  // ==========================================
-  // Only open opportunities contribute to financial pipeline KPIs.
-  // When a deal is marked Won or Lost, it is removed from Pipeline Value,
-  // Weighted Forecast and Monthly Turnover.
-  const activeItems = items.filter((i) => {
-    const stage = (i.stage || "").toLowerCase();
-    const status = (i.status || "").toLowerCase();
+  const dashboard = useMemo(() => {
+    const activeItems = items.filter(isOpenItem);
+    const wonItems = items.filter((item) => item.stage === "Won");
+    const lostItems = items.filter((item) => item.stage === "Lost");
 
-    return (
-      stage !== "won" &&
-      stage !== "lost" &&
-      status !== "won" &&
-      status !== "lost"
+    const pipelineValue = activeItems.reduce(
+      (sum, item) => sum + Number(item.value || 0),
+      0
     );
-  });
 
-  const wonItems = items.filter((i) => {
-    const stage = (i.stage || "").toLowerCase();
-    const status = (i.status || "").toLowerCase();
-    return stage === "won" || status === "won";
-  });
+    const monthlyTurnover = activeItems.reduce(
+      (sum, item) => sum + Number(item.monthly_turnover || 0),
+      0
+    );
 
-  const lostItems = items.filter((i) => {
-    const stage = (i.stage || "").toLowerCase();
-    const status = (i.status || "").toLowerCase();
-    return stage === "lost" || status === "lost";
-  });
+    const weightedForecast = activeItems.reduce(
+      (sum, item) =>
+        sum +
+        Number(item.value || 0) *
+          (Math.min(100, Math.max(0, Number(item.probability || 0))) / 100),
+      0
+    );
 
-  const proposalValue = activeItems.reduce(
-    (sum, i) => sum + Number(i.value || 0),
-    0
-  );
-
-  const monthlyTurnover = activeItems.reduce(
-    (sum, i) => sum + Number(i.monthly_turnover || 0),
-    0
-  );
-
-  const weightedForecast = activeItems.reduce((sum, i) => {
-    return sum + Number(i.value || 0) * (Number(i.probability || 0) / 100);
-  }, 0);
-
-  const prospects = activeItems.filter((i) => i.type === "prospect");
-  const newClients = activeItems.filter((i) => i.type === "new_client");
-  const existingClients = activeItems.filter((i) => i.type === "existing_client");
-  const doctorSites = activeItems.filter((i) => i.type === "doctor_site");
-  const vacantSites = activeItems.filter((i) => i.type === "vacant_site");
-  const pillsquad = activeItems.filter((i) => i.type === "pillsquad");
+    return {
+      activeItems,
+      wonItems,
+      lostItems,
+      pipelineValue,
+      monthlyTurnover,
+      weightedForecast,
+      prospects: activeItems.filter((item) => item.type === "prospect"),
+      newClients: activeItems.filter((item) => item.type === "new_client"),
+      existingClients: activeItems.filter(
+        (item) => item.type === "existing_client"
+      ),
+      doctorSites: activeItems.filter((item) => item.type === "doctor_site"),
+      vacantSites: activeItems.filter((item) => item.type === "vacant_site"),
+      pillsquad: activeItems.filter((item) => item.type === "pillsquad"),
+    };
+  }, [items]);
 
   return (
     <main className="min-h-screen bg-slate-100 flex">
@@ -352,11 +467,12 @@ export default function SalesDashboardPage() {
               Commercial Dashboard
             </h2>
             <p className="text-slate-600">
-              Pipeline, proposals, client value, doctor sites and PillSquad progress.
+              Pipeline, proposals, client value, doctor sites and PillSquad
+              progress.
             </p>
           </div>
 
-          <div className="flex gap-3">
+          <div className="flex flex-col sm:flex-row gap-3">
             <input
               className="border rounded-xl px-4 py-3 w-full md:w-72"
               placeholder="Search pipeline..."
@@ -370,9 +486,9 @@ export default function SalesDashboardPage() {
               onChange={(e) => setFilterType(e.target.value)}
             >
               <option value="all">All</option>
-              {types.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label}
+              {types.map((type) => (
+                <option key={type.value} value={type.value}>
+                  {type.label}
                 </option>
               ))}
             </select>
@@ -385,21 +501,42 @@ export default function SalesDashboardPage() {
           </div>
         )}
 
-        <div id="reports" className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-          <Kpi title="Pipeline Value" value={`R ${proposalValue.toLocaleString()}`} />
-          <Kpi title="Weighted Forecast" value={`R ${Math.round(weightedForecast).toLocaleString()}`} />
-          <Kpi title="Monthly Turnover" value={`R ${monthlyTurnover.toLocaleString()}`} />
-          <Kpi title="Prospects" value={prospects.length} />
-          <Kpi title="New Clients" value={newClients.length} />
-          <Kpi title="Existing Clients" value={existingClients.length} />
-          <Kpi title="Doctor Sites" value={doctorSites.length} />
-          <Kpi title="Vacant Sites" value={vacantSites.length} />
-          <Kpi title="PillSquad Records" value={pillsquad.length} />
-          <Kpi title="Open Deals" value={activeItems.length} />
-          <Kpi title="Won Deals" value={wonItems.length} />
-          <Kpi title="Lost Deals" value={lostItems.length} />
-          <Kpi title="Activities" value={activities.length} />
-        </div>
+        {loading ? (
+          <div className="mb-6 rounded-xl bg-white p-5 shadow">
+            Loading dashboard...
+          </div>
+        ) : (
+          <div id="reports" className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <Kpi
+              title="Pipeline Value"
+              value={formatCurrency(dashboard.pipelineValue)}
+            />
+            <Kpi
+              title="Weighted Forecast"
+              value={formatCurrency(dashboard.weightedForecast)}
+            />
+            <Kpi
+              title="Monthly Turnover"
+              value={formatCurrency(dashboard.monthlyTurnover)}
+            />
+            <Kpi title="Prospects" value={dashboard.prospects.length} />
+            <Kpi title="New Clients" value={dashboard.newClients.length} />
+            <Kpi
+              title="Existing Clients"
+              value={dashboard.existingClients.length}
+            />
+            <Kpi title="Doctor Sites" value={dashboard.doctorSites.length} />
+            <Kpi title="Vacant Sites" value={dashboard.vacantSites.length} />
+            <Kpi
+              title="PillSquad Records"
+              value={dashboard.pillsquad.length}
+            />
+            <Kpi title="Open Deals" value={dashboard.activeItems.length} />
+            <Kpi title="Won Deals" value={dashboard.wonItems.length} />
+            <Kpi title="Lost Deals" value={dashboard.lostItems.length} />
+            <Kpi title="Activities" value={activities.length} />
+          </div>
+        )}
 
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-6">
           <section
@@ -411,11 +548,11 @@ export default function SalesDashboardPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-3">
               {stages.map((stage) => {
                 const stageItems = filteredItems.filter(
-                  (i) => (i.stage || "Lead") === stage
+                  (item) => (item.stage || "Lead") === stage
                 );
 
                 const stageValue = stageItems.reduce(
-                  (sum, i) => sum + Number(i.value || 0),
+                  (sum, item) => sum + Number(item.value || 0),
                   0
                 );
 
@@ -423,20 +560,72 @@ export default function SalesDashboardPage() {
                   <div key={stage} className="bg-slate-100 rounded-2xl p-3">
                     <p className="font-bold text-slate-800">{stage}</p>
                     <p className="text-xs text-slate-500 mb-3">
-                      R {stageValue.toLocaleString()} · {stageItems.length} deal
+                      {formatCurrency(stageValue)} · {stageItems.length}{" "}
+                      {stageItems.length === 1 ? "deal" : "deals"}
                     </p>
 
                     <div className="space-y-3">
+                      {stageItems.length === 0 && (
+                        <div className="rounded-xl border border-dashed border-slate-300 p-3 text-xs text-slate-500">
+                          No records
+                        </div>
+                      )}
+
                       {stageItems.map((item) => (
                         <div
                           key={item.id}
                           className="bg-white rounded-xl p-3 border shadow-sm"
                         >
-                          <p className="font-semibold">{item.name}</p>
-                          <p className="text-xs text-slate-500">{item.service}</p>
+                          {editingId === item.id ? (
+                            <div className="space-y-2">
+                              <input
+                                className="w-full border rounded-lg p-2 text-sm"
+                                value={editingName}
+                                onChange={(e) => setEditingName(e.target.value)}
+                                autoFocus
+                              />
+
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  disabled={savingId === item.id}
+                                  onClick={() => updateProspectName(item.id)}
+                                  className="flex-1 bg-orange-500 text-white rounded-lg py-2 text-xs disabled:opacity-50"
+                                >
+                                  Save name
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={cancelEditingName}
+                                  className="flex-1 bg-slate-200 text-slate-700 rounded-lg py-2 text-xs"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="font-semibold break-words">
+                                {item.name}
+                              </p>
+
+                              <button
+                                type="button"
+                                onClick={() => startEditingName(item)}
+                                className="shrink-0 text-xs text-orange-600 hover:text-orange-700"
+                              >
+                                Edit
+                              </button>
+                            </div>
+                          )}
+
+                          <p className="text-xs text-slate-500 mt-1">
+                            {item.service}
+                          </p>
 
                           <p className="text-sm font-bold mt-2">
-                            R {Number(item.value || 0).toLocaleString()}
+                            {formatCurrency(Number(item.value || 0))}
                           </p>
 
                           <p className="text-xs mt-1">
@@ -454,28 +643,37 @@ export default function SalesDashboardPage() {
                           <select
                             className="w-full mt-3 border rounded-lg p-2 text-xs"
                             value={item.stage || "Lead"}
+                            disabled={savingId === item.id}
                             onChange={(e) =>
                               updateLeadStage(item.id, e.target.value)
                             }
                           >
-                            {stages.map((s) => (
-                              <option key={s} value={s}>
-                                Move to {s}
+                            {stages.map((stageOption) => (
+                              <option key={stageOption} value={stageOption}>
+                                Move to {stageOption}
                               </option>
                             ))}
                           </select>
 
                           <div className="flex gap-2 mt-3">
                             <button
+                              type="button"
+                              disabled={
+                                savingId === item.id || item.stage === "Won"
+                              }
                               onClick={() => updateLeadStage(item.id, "Won")}
-                              className="flex-1 bg-green-600 text-white rounded-lg py-2 text-xs"
+                              className="flex-1 bg-green-600 text-white rounded-lg py-2 text-xs disabled:opacity-40"
                             >
                               Won
                             </button>
 
                             <button
+                              type="button"
+                              disabled={
+                                savingId === item.id || item.stage === "Lost"
+                              }
                               onClick={() => updateLeadStage(item.id, "Lost")}
-                              className="flex-1 bg-red-600 text-white rounded-lg py-2 text-xs"
+                              className="flex-1 bg-red-600 text-white rounded-lg py-2 text-xs disabled:opacity-40"
                             >
                               Lost
                             </button>
@@ -501,9 +699,9 @@ export default function SalesDashboardPage() {
                 value={form.type}
                 onChange={(e) => setForm({ ...form, type: e.target.value })}
               >
-                {types.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
+                {types.map((type) => (
+                  <option key={type.value} value={type.value}>
+                    {type.label}
                   </option>
                 ))}
               </select>
@@ -534,10 +732,18 @@ export default function SalesDashboardPage() {
               <select
                 className="input"
                 value={form.stage}
-                onChange={(e) => setForm({ ...form, stage: e.target.value })}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    stage: e.target.value,
+                    status: getStatusForStage(e.target.value),
+                  })
+                }
               >
-                {stages.map((s) => (
-                  <option key={s}>{s}</option>
+                {stages.map((stage) => (
+                  <option key={stage} value={stage}>
+                    {stage}
+                  </option>
                 ))}
               </select>
 
@@ -545,6 +751,7 @@ export default function SalesDashboardPage() {
                 className="input"
                 placeholder="Proposal Value"
                 type="number"
+                min="0"
                 value={form.value}
                 onChange={(e) => setForm({ ...form, value: e.target.value })}
               />
@@ -553,6 +760,7 @@ export default function SalesDashboardPage() {
                 className="input"
                 placeholder="Monthly Turnover"
                 type="number"
+                min="0"
                 value={form.monthly_turnover}
                 onChange={(e) =>
                   setForm({ ...form, monthly_turnover: e.target.value })
@@ -563,6 +771,8 @@ export default function SalesDashboardPage() {
                 className="input"
                 placeholder="Probability %"
                 type="number"
+                min="0"
+                max="100"
                 value={form.probability}
                 onChange={(e) =>
                   setForm({ ...form, probability: e.target.value })
@@ -656,6 +866,7 @@ export default function SalesDashboardPage() {
               />
 
               <button
+                type="button"
                 onClick={saveItem}
                 className="w-full bg-orange-500 hover:bg-orange-600 text-white px-6 py-3 rounded-xl font-semibold"
               >
@@ -762,6 +973,7 @@ export default function SalesDashboardPage() {
               />
 
               <button
+                type="button"
                 onClick={saveActivity}
                 className="w-full bg-slate-950 hover:bg-slate-800 text-white px-6 py-3 rounded-xl font-semibold"
               >
@@ -786,15 +998,31 @@ export default function SalesDashboardPage() {
                 </thead>
 
                 <tbody>
-                  {activities.map((activity) => (
-                    <tr key={activity.id} className="border-b hover:bg-slate-50">
-                      <td className="p-3">{activity.activity_type}</td>
-                      <td className="p-3 font-semibold">{activity.subject}</td>
-                      <td className="p-3">{activity.due_date}</td>
-                      <td className="p-3">{activity.priority}</td>
-                      <td className="p-3">{activity.status}</td>
+                  {activities.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={5}
+                        className="p-6 text-center text-slate-500"
+                      >
+                        No activities recorded.
+                      </td>
                     </tr>
-                  ))}
+                  ) : (
+                    activities.map((activity) => (
+                      <tr
+                        key={activity.id}
+                        className="border-b hover:bg-slate-50"
+                      >
+                        <td className="p-3">{activity.activity_type}</td>
+                        <td className="p-3 font-semibold">
+                          {activity.subject}
+                        </td>
+                        <td className="p-3">{activity.due_date || "—"}</td>
+                        <td className="p-3">{activity.priority}</td>
+                        <td className="p-3">{activity.status}</td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -825,45 +1053,125 @@ export default function SalesDashboardPage() {
               </thead>
 
               <tbody>
-                {filteredItems.map((item) => (
-                  <tr key={item.id} className="border-b hover:bg-slate-50">
-                    <td className="p-3">{item.type}</td>
-                    <td className="p-3 font-semibold">{item.name}</td>
-                    <td className="p-3">{item.service}</td>
-                    <td className="p-3">
-                      R {Number(item.value || 0).toLocaleString()}
-                    </td>
-                    <td className="p-3">
-                      R {Number(item.monthly_turnover || 0).toLocaleString()}
-                    </td>
-                    <td className="p-3">{item.stage}</td>
-                    <td className="p-3">{item.probability || 0}%</td>
-                    <td className="p-3">{item.next_action}</td>
-                    <td className="p-3">{item.assigned_to}</td>
-                    <td className="p-3 flex gap-2">
-                      <button
-                        onClick={() => updateLeadStage(item.id, "Won")}
-                        className="bg-green-600 text-white px-3 py-1 rounded-lg text-xs"
-                      >
-                        Won
-                      </button>
-
-                      <button
-                        onClick={() => updateLeadStage(item.id, "Lost")}
-                        className="bg-red-600 text-white px-3 py-1 rounded-lg text-xs"
-                      >
-                        Lost
-                      </button>
-
-                      <button
-                        onClick={() => deleteRecord(item.id)}
-                        className="bg-slate-700 text-white px-3 py-1 rounded-lg text-xs"
-                      >
-                        Delete
-                      </button>
+                {filteredItems.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={10}
+                      className="p-6 text-center text-slate-500"
+                    >
+                      No records found.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  filteredItems.map((item) => (
+                    <tr key={item.id} className="border-b hover:bg-slate-50">
+                      <td className="p-3">{item.type}</td>
+
+                      <td className="p-3 font-semibold min-w-56">
+                        {editingId === item.id ? (
+                          <div className="flex gap-2">
+                            <input
+                              className="border rounded-lg px-2 py-1 min-w-36"
+                              value={editingName}
+                              onChange={(e) => setEditingName(e.target.value)}
+                            />
+
+                            <button
+                              type="button"
+                              onClick={() => updateProspectName(item.id)}
+                              className="bg-orange-500 text-white px-3 py-1 rounded-lg text-xs"
+                            >
+                              Save
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={cancelEditingName}
+                              className="bg-slate-200 text-slate-700 px-3 py-1 rounded-lg text-xs"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <span>{item.name}</span>
+                            <button
+                              type="button"
+                              onClick={() => startEditingName(item)}
+                              className="text-orange-600 text-xs"
+                            >
+                              Edit
+                            </button>
+                          </div>
+                        )}
+                      </td>
+
+                      <td className="p-3">{item.service}</td>
+                      <td className="p-3">
+                        {formatCurrency(Number(item.value || 0))}
+                      </td>
+                      <td className="p-3">
+                        {formatCurrency(Number(item.monthly_turnover || 0))}
+                      </td>
+
+                      <td className="p-3 min-w-40">
+                        <select
+                          className="border rounded-lg px-2 py-1"
+                          value={item.stage || "Lead"}
+                          disabled={savingId === item.id}
+                          onChange={(e) =>
+                            updateLeadStage(item.id, e.target.value)
+                          }
+                        >
+                          {stages.map((stage) => (
+                            <option key={stage} value={stage}>
+                              {stage}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+
+                      <td className="p-3">{item.probability || 0}%</td>
+                      <td className="p-3">{item.next_action || "—"}</td>
+                      <td className="p-3">{item.assigned_to || "—"}</td>
+
+                      <td className="p-3">
+                        <div className="flex flex-wrap gap-2 min-w-52">
+                          <button
+                            type="button"
+                            disabled={
+                              savingId === item.id || item.stage === "Won"
+                            }
+                            onClick={() => updateLeadStage(item.id, "Won")}
+                            className="bg-green-600 text-white px-3 py-1 rounded-lg text-xs disabled:opacity-40"
+                          >
+                            Won
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={
+                              savingId === item.id || item.stage === "Lost"
+                            }
+                            onClick={() => updateLeadStage(item.id, "Lost")}
+                            className="bg-red-600 text-white px-3 py-1 rounded-lg text-xs disabled:opacity-40"
+                          >
+                            Lost
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={savingId === item.id}
+                            onClick={() => deleteRecord(item.id)}
+                            className="bg-slate-700 text-white px-3 py-1 rounded-lg text-xs disabled:opacity-40"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -902,3 +1210,8 @@ function Kpi({
     </div>
   );
 }
+'''
+
+out = Path("/mnt/data/page.tsx")
+out.write_text(updated)
+print(out)
